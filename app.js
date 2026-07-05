@@ -1392,28 +1392,49 @@ async function loadPortfolioFromFile(file) {
   }
 }
 
+const LS_KEY = 'moex_bond_map_portfolio';
+
 async function loadPortfolioFromServer() {
   try {
     const res = await fetch('portfolio.json?' + Date.now());
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!Array.isArray(data.portfolios)) return;
-    portfolioData     = data;
-    visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id));
-  } catch {
-    // portfolio.json не существует — нормально при первом запуске
-  }
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.portfolios)) {
+        portfolioData     = data;
+        visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id));
+        return;
+      }
+    }
+  } catch { /* сервер недоступен — пробуем localStorage */ }
+
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.portfolios)) {
+        portfolioData     = data;
+        visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id));
+      }
+    }
+  } catch { /* localStorage пуст или повреждён */ }
 }
 
 async function savePortfolioToServer() {
+  const json = JSON.stringify(portfolioData);
   try {
     const res = await fetch('/api/save-portfolio', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(portfolioData),
+      body:    json,
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     showSaveStatus('✓ Сохранено');
+    return;
+  } catch { /* сервер недоступен — сохраняем локально */ }
+
+  try {
+    localStorage.setItem(LS_KEY, json);
+    showSaveStatus('✓ Сохранено локально');
   } catch (e) {
     showSaveStatus('Ошибка сохранения', true);
     console.error('save-portfolio:', e);
