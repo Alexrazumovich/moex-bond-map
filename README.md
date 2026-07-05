@@ -4,7 +4,7 @@
 
 **[Открыть приложение →](https://alexrazumovich.github.io/moex-bond-map/)**
 
-![Карта рынка облигаций](img/current_map.png)
+![Карта рынка облигаций](https://raw.githubusercontent.com/Alexrazumovich/moex-bond-map/master/img/current_map.png)
 
 ---
 
