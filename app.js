@@ -1,5 +1,13 @@
 'use strict';
 
+// ─── Supabase ─────────────────────────────────────────────────────────────────
+// Publishable key — безопасен для браузера, защита через Row Level Security на стороне БД
+const SUPABASE_URL = 'https://dxtdtnfwgpgguicrihox.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_fr7wn5wDyGuVwVpOxX0vgQ_DofcPKLU';
+let sb = null;
+let currentUser = null;
+let authMode = 'signin';
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 // Конкретные торговые площадки MOEX: только они дают актуальные данные и правильный тип.
@@ -1374,7 +1382,7 @@ function submitAddPosition() {
   renderPortfolioPanel();
   if (chart) applySearch();
   closeAddPositionForm();
-  savePortfolioToServer();
+  savePortfolio();
 }
 
 async function loadPortfolioFromFile(file) {
@@ -1386,7 +1394,7 @@ async function loadPortfolioFromFile(file) {
     visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id));
     renderPortfolioPanel();
     if (chart) applySearch();
-    savePortfolioToServer();
+    savePortfolio();
   } catch (e) {
     alert('Ошибка загрузки: ' + e.message);
   }
@@ -1394,51 +1402,187 @@ async function loadPortfolioFromFile(file) {
 
 const LS_KEY = 'moex_bond_map_portfolio';
 
-async function loadPortfolioFromServer() {
+// ─── Supabase portfolio ───────────────────────────────────────────────────────
+
+async function sbLoadPortfolios() {
+  try {
+    const { data: pRows, error: pErr } = await sb.from('portfolios').select('*').order('created_at');
+    if (pErr) throw pErr;
+    if (!pRows?.length) { portfolioData = { portfolios: [] }; visiblePortfolios = new Set(); return; }
+
+    const { data: posRows, error: posErr } = await sb.from('positions').select('*')
+      .in('portfolio_id', pRows.map(p => p.id));
+    if (posErr) throw posErr;
+
+    portfolioData = {
+      portfolios: pRows.map(p => ({
+        id:        p.client_id,
+        name:      p.name,
+        color:     p.color,
+        positions: (posRows || [])
+          .filter(pos => pos.portfolio_id === p.id)
+          .map(pos => ({ isin: pos.isin, qty: pos.qty, ...(pos.buy_price != null ? { buyPrice: pos.buy_price } : {}) })),
+      }))
+    };
+    visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id));
+  } catch (e) { console.error('sbLoadPortfolios:', e); }
+}
+
+async function sbSavePortfolios() {
+  try {
+    const userId = currentUser.id;
+    const { error: delErr } = await sb.from('portfolios').delete().eq('user_id', userId);
+    if (delErr) throw delErr;
+
+    for (const p of portfolioData.portfolios) {
+      const { data: pRow, error: pErr } = await sb.from('portfolios')
+        .insert({ user_id: userId, client_id: p.id, name: p.name, color: p.color })
+        .select().single();
+      if (pErr) throw pErr;
+
+      if (p.positions.length > 0) {
+        const { error: posErr } = await sb.from('positions').insert(
+          p.positions.map(pos => ({ portfolio_id: pRow.id, isin: pos.isin, qty: pos.qty, buy_price: pos.buyPrice ?? null }))
+        );
+        if (posErr) throw posErr;
+      }
+    }
+    showSaveStatus('✓ Сохранено');
+  } catch (e) { showSaveStatus('Ошибка сохранения', true); console.error('sbSavePortfolios:', e); }
+}
+
+// ─── localStorage fallback ────────────────────────────────────────────────────
+
+async function loadFromLocalStorage() {
+  // Сначала пробуем portfolio.json (локальный server.py)
   try {
     const res = await fetch('portfolio.json?' + Date.now());
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.portfolios)) {
-        portfolioData     = data;
-        visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id));
-        return;
+        portfolioData = data; visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id)); return;
       }
     }
-  } catch { /* сервер недоступен — пробуем localStorage */ }
-
+  } catch {}
+  // Fallback: localStorage
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
       const data = JSON.parse(raw);
       if (Array.isArray(data.portfolios)) {
-        portfolioData     = data;
-        visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id));
+        portfolioData = data; visiblePortfolios = new Set(portfolioData.portfolios.map(p => p.id));
       }
     }
-  } catch { /* localStorage пуст или повреждён */ }
+  } catch {}
 }
 
-async function savePortfolioToServer() {
+async function savePortfolio() {
+  if (currentUser) { await sbSavePortfolios(); return; }
   const json = JSON.stringify(portfolioData);
   try {
-    const res = await fetch('/api/save-portfolio', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    json,
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    showSaveStatus('✓ Сохранено');
-    return;
-  } catch { /* сервер недоступен — сохраняем локально */ }
+    const res = await fetch('/api/save-portfolio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json });
+    if (!res.ok) throw new Error();
+    showSaveStatus('✓ Сохранено'); return;
+  } catch {}
+  try { localStorage.setItem(LS_KEY, json); showSaveStatus('✓ Сохранено локально'); }
+  catch { showSaveStatus('Ошибка сохранения', true); }
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+async function initAuth() {
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const { data: { session } } = await sb.auth.getSession();
+  currentUser = session?.user ?? null;
+
+  if (currentUser) { await sbLoadPortfolios(); }
+  else             { await loadFromLocalStorage(); }
+
+  renderAuthBar();
+
+  sb.auth.onAuthStateChange(async (event, session) => {
+    const wasLoggedIn = !!currentUser;
+    currentUser = session?.user ?? null;
+    renderAuthBar();
+
+    if (event === 'SIGNED_IN' && !wasLoggedIn) {
+      await sbLoadPortfolios();
+      renderPortfolioPanel();
+      if (chart) applySearch();
+    } else if (event === 'SIGNED_OUT') {
+      portfolioData = { portfolios: [] }; visiblePortfolios = new Set();
+      await loadFromLocalStorage();
+      renderPortfolioPanel();
+      if (chart) applySearch();
+    }
+  });
+}
+
+function renderAuthBar() {
+  const bar = document.getElementById('auth-bar');
+  if (!bar) return;
+  if (currentUser) {
+    bar.innerHTML = `<span class="auth-email" title="${currentUser.email}">${currentUser.email}</span>
+      <button class="btn btn-small" id="btn-auth-logout">Выйти</button>`;
+    document.getElementById('btn-auth-logout').addEventListener('click', () => sb.auth.signOut());
+  } else {
+    bar.innerHTML = `<button class="btn btn-small" id="btn-auth-open">Войти</button>`;
+    document.getElementById('btn-auth-open').addEventListener('click', openAuthModal);
+  }
+}
+
+function openAuthModal(mode = 'signin') {
+  authMode = mode;
+  const isSignIn = mode === 'signin';
+  document.getElementById('auth-form-title').textContent  = isSignIn ? 'Войти' : 'Регистрация';
+  document.getElementById('btn-auth-submit').textContent  = isSignIn ? 'Войти' : 'Зарегистрироваться';
+  document.getElementById('btn-auth-toggle').textContent  = isSignIn ? 'Зарегистрироваться →' : '← Войти';
+  document.getElementById('auth-email').value    = '';
+  document.getElementById('auth-password').value = '';
+  document.getElementById('auth-error').style.display = 'none';
+  document.getElementById('auth-overlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('auth-email').focus(), 50);
+}
+
+function initAuthListeners() {
+  document.getElementById('btn-auth-toggle').addEventListener('click', () => {
+    openAuthModal(authMode === 'signin' ? 'signup' : 'signin');
+  });
+  document.getElementById('btn-auth-submit').addEventListener('click', submitAuth);
+  document.getElementById('auth-password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
+  document.getElementById('auth-overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('auth-overlay'))
+      document.getElementById('auth-overlay').style.display = 'none';
+  });
+}
+
+async function submitAuth() {
+  const email    = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!email || !password) { showAuthError('Заполните все поля'); return; }
+
+  const btn = document.getElementById('btn-auth-submit');
+  btn.disabled = true; btn.textContent = '…';
 
   try {
-    localStorage.setItem(LS_KEY, json);
-    showSaveStatus('✓ Сохранено локально');
+    const fn = authMode === 'signin'
+      ? sb.auth.signInWithPassword({ email, password })
+      : sb.auth.signUp({ email, password });
+    const { error } = await fn;
+    if (error) throw error;
+    document.getElementById('auth-overlay').style.display = 'none';
+    if (authMode === 'signup') showSaveStatus('Письмо с подтверждением отправлено');
   } catch (e) {
-    showSaveStatus('Ошибка сохранения', true);
-    console.error('save-portfolio:', e);
+    showAuthError(e.message);
+    btn.disabled = false;
+    btn.textContent = authMode === 'signin' ? 'Войти' : 'Зарегистрироваться';
   }
+}
+
+function showAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  el.textContent = msg; el.style.display = 'block';
 }
 
 function showSaveStatus(msg, isError = false) {
@@ -1519,7 +1663,7 @@ function submitExcelImport() {
   closeExcelImportDialog();
   renderPortfolioPanel();
   if (chart) applySearch();
-  savePortfolioToServer();
+  savePortfolio();
   showSaveStatus(`Импортировано: ${imported} позиций`);
 }
 
@@ -1533,7 +1677,7 @@ function initPortfolio() {
     e.target.value = '';
   });
 
-  document.getElementById('btn-pf-save').addEventListener('click', savePortfolioToServer);
+  document.getElementById('btn-pf-save').addEventListener('click', () => savePortfolio());
 
   document.getElementById('btn-pf-filter').addEventListener('click', () => {
     portfolioFilterMode = !portfolioFilterMode;
@@ -1588,6 +1732,7 @@ async function init() {
   initFilters();
   initTable();
   initPortfolio();
+  initAuthListeners();
 
   document.getElementById('btn-clear').addEventListener('click', clearBrush);
   document.getElementById('btn-csv').addEventListener('click', () => downloadCsv(selectedBonds));
@@ -1620,8 +1765,8 @@ async function init() {
   });
 
   try {
-    // Загружаем рейтинги, данные MOEX и КБД параллельно
-    [allBonds] = await Promise.all([fetchAllBonds(), fetchRatings(), fetchZCYC(), loadPortfolioFromServer()]);
+    // Загружаем рейтинги, данные MOEX, КБД и портфели параллельно
+    [allBonds] = await Promise.all([fetchAllBonds(), fetchRatings(), fetchZCYC(), initAuth()]);
 
     // Первый проход: нормализуем все рейтинги по ISIN / SECID в массив
     allBonds.forEach(b => {

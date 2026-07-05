@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Карта рынка облигаций — MOEX</title>
-  <link rel="stylesheet" href="style.css?v=55">
+  <link rel="stylesheet" href="style.css?v=56">
 </head>
 <body>
   <div class="app">
@@ -84,6 +84,7 @@
     <div class="portfolio-panel">
       <div class="portfolio-header">
         <span class="portfolio-title">Портфели</span>
+        <div id="auth-bar" class="auth-bar"></div>
         <div class="pf-actions">
           <button class="btn" id="btn-pf-add-pos">+ Позиция</button>
           <button class="btn" id="btn-pf-excel">↑ Excel</button>
@@ -97,6 +98,23 @@
       </div>
       <div id="pf-list" class="pf-list">
         <span class="pf-empty">Нет портфелей — нажмите «+ Позиция»</span>
+      </div>
+    </div>
+
+    <div id="auth-overlay" class="pf-form-overlay" style="display:none">
+      <div class="pf-form">
+        <div class="pf-form-title" id="auth-form-title">Войти</div>
+        <label class="pf-label">Email
+          <input type="email" id="auth-email" class="pf-input" placeholder="you@example.com" autocomplete="email">
+        </label>
+        <label class="pf-label">Пароль
+          <input type="password" id="auth-password" class="pf-input" placeholder="••••••••" autocomplete="current-password">
+        </label>
+        <div id="auth-error" class="auth-error" style="display:none"></div>
+        <div class="pf-form-actions">
+          <button class="btn" id="btn-auth-toggle">Зарегистрироваться →</button>
+          <button class="btn btn-primary" id="btn-auth-submit">Войти</button>
+        </div>
       </div>
     </div>
 
@@ -206,6 +224,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=55"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="app.js?v=56"></script>
 </body>
 </html>
