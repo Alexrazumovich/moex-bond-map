@@ -1,0 +1,18 @@
+# Personal data — never commit
+portfolio.json
+files/
+
+# Legacy ratings pipeline — binary files and intermediates
+photo-ratings/
+~$*.xlsx
+~$*.xls
+
+# Runtime
+errors/
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Карта рынка облигаций — MOEX</title>
+  <link rel="stylesheet" href="style.css?v=54">
+</head>
+<body>
+  <div class="app">
+
+    <header class="header">
+      <div class="header-left">
+        <h1 class="header-title">Карта рынка облигаций</h1>
+        <span id="update-time" class="update-time"></span>
+      </div>
+      <div class="header-right">
+        <span id="stats-total" class="badge">Загрузка…</span>
+        <span id="stats-filtered" class="badge" style="display:none"></span>
+      </div>
+    </header>
+
+    <div class="search-panel">
+      <div class="search-input-wrap">
+        <svg class="search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6.5" cy="6.5" r="4.5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/></svg>
+        <input id="search-input" type="text" class="search-input" placeholder="Эмитент или тикер…" autocomplete="off" spellcheck="false">
+        <button id="search-clear" class="search-clear" title="Очистить" style="display:none">✕</button>
+      </div>
+      <div class="search-modes">
+        <label class="search-mode-opt"><input type="radio" name="search-mode" value="highlight" checked><span>Подсветить</span></label>
+        <label class="search-mode-opt"><input type="radio" name="search-mode" value="only"><span>Только результаты</span></label>
+      </div>
+    </div>
+
+    <div class="filters-panel">
+
+      <div class="filter-dropdown" id="filter-type">
+        <button class="filter-dropdown-btn" type="button">
+          Тип эмитента&nbsp;<span class="filter-count">Все (4)</span><span class="filter-chevron">▾</span>
+        </button>
+        <div class="filter-dropdown-panel">
+          <label class="filter-option"><input type="checkbox" checked value="ОФЗ"><span class="dot" style="background:#4e9af1"></span>ОФЗ</label>
+          <label class="filter-option"><input type="checkbox" checked value="Муниципальные"><span class="dot" style="background:#52c41a"></span>Муниципальные</label>
+          <label class="filter-option"><input type="checkbox" checked value="Корпоративные"><span class="dot" style="background:#fa8c16"></span>Корпоративные</label>
+          <label class="filter-option"><input type="checkbox" checked value="Прочие"><span class="dot" style="background:#8c8c8c"></span>Прочие</label>
+        </div>
+      </div>
+
+      <div class="filter-dropdown" id="filter-coupon">
+        <button class="filter-dropdown-btn" type="button">
+          Тип купона&nbsp;<span class="filter-count">Все (5)</span><span class="filter-chevron">▾</span>
+        </button>
+        <div class="filter-dropdown-panel">
+          <label class="filter-option"><input type="checkbox" checked value="Фиксированный">Фиксированный</label>
+          <label class="filter-option"><input type="checkbox" checked value="Флоатер">Флоатер (плавающая ставка)</label>
+          <label class="filter-option"><input type="checkbox" checked value="Переменный">Переменный (с офертой)</label>
+          <label class="filter-option"><input type="checkbox" checked value="Дисконтный">Дисконтный</label>
+          <label class="filter-option"><input type="checkbox" checked value="Прочие">Прочие</label>
+        </div>
+      </div>
+
+      <div class="filter-dropdown" id="filter-rating">
+        <button class="filter-dropdown-btn" type="button">
+          Рейтинг&nbsp;<span class="filter-count">—</span><span class="filter-chevron">▾</span>
+        </button>
+        <div class="filter-dropdown-panel">
+          <!-- заполняется динамически после загрузки данных -->
+        </div>
+      </div>
+
+      <div class="filter-dropdown" id="filter-currency">
+        <button class="filter-dropdown-btn" type="button">
+          Валюта&nbsp;<span class="filter-count">Все (3)</span><span class="filter-chevron">▾</span>
+        </button>
+        <div class="filter-dropdown-panel">
+          <label class="filter-option"><input type="checkbox" checked value="SUR">₽ RUB</label>
+          <label class="filter-option"><input type="checkbox" checked value="USD">$ USD</label>
+          <label class="filter-option"><input type="checkbox" checked value="EUR">€ EUR</label>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="portfolio-panel">
+      <div class="portfolio-header">
+        <span class="portfolio-title">Портфели</span>
+        <div class="pf-actions">
+          <button class="btn" id="btn-pf-add-pos">+ Позиция</button>
+          <button class="btn" id="btn-pf-excel">↑ Excel</button>
+          <button class="btn" id="btn-pf-load">↑ JSON</button>
+          <button class="btn" id="btn-pf-save">Сохранить</button>
+          <button class="btn" id="btn-pf-filter">Только портфели</button>
+          <span id="pf-save-status" class="pf-save-status"></span>
+          <input type="file" id="pf-file-input" accept=".json" style="display:none">
+          <input type="file" id="pf-excel-input" accept=".xlsx" style="display:none">
+        </div>
+      </div>
+      <div id="pf-list" class="pf-list">
+        <span class="pf-empty">Нет портфелей — нажмите «+ Позиция»</span>
+      </div>
+    </div>
+
+    <div id="pf-form-overlay" class="pf-form-overlay" style="display:none">
+      <div class="pf-form">
+        <div class="pf-form-title">Добавить позицию</div>
+        <label class="pf-label">Портфель
+          <select id="pf-sel-portfolio" class="pf-input">
+            <option value="__new__">+ Новый портфель…</option>
+          </select>
+        </label>
+        <label class="pf-label" id="pf-new-name-row">Название портфеля
+          <input type="text" id="pf-new-name" class="pf-input" placeholder="Мой портфель">
+        </label>
+        <label class="pf-label">ISIN или тикер
+          <input type="text" id="pf-isin" class="pf-input" placeholder="RU000A105NJ3">
+        </label>
+        <label class="pf-label">Количество, шт.
+          <input type="number" id="pf-qty" class="pf-input" placeholder="10" min="1" step="1">
+        </label>
+        <label class="pf-label">Цена покупки, %
+          <input type="number" id="pf-price" class="pf-input" placeholder="98.50" step="0.01">
+        </label>
+        <div class="pf-form-actions">
+          <button class="btn" id="pf-cancel">Отмена</button>
+          <button class="btn btn-primary" id="pf-submit">Добавить</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pf-excel-overlay" class="pf-form-overlay" style="display:none">
+      <div class="pf-form">
+        <div class="pf-form-title">Импорт из Excel</div>
+        <p id="pf-excel-info" class="pf-excel-info"></p>
+        <label class="pf-label">Портфель
+          <select id="pf-excel-portfolio" class="pf-input">
+            <option value="__new__">+ Новый портфель…</option>
+          </select>
+        </label>
+        <label class="pf-label" id="pf-excel-name-row">Название нового портфеля
+          <input type="text" id="pf-excel-name" class="pf-input" placeholder="Мой портфель">
+        </label>
+        <div class="pf-form-actions">
+          <button class="btn" id="pf-excel-cancel">Отмена</button>
+          <button class="btn btn-primary" id="pf-excel-submit">Импортировать</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p id="loading-msg">Подключение к MOEX ISS…</p>
+      </div>
+      <div id="chart"></div>
+
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="zc-in"    title="Приблизить (оба масштаба)">+</button>
+        <button class="zoom-btn" id="zc-out"   title="Отдалить (оба масштаба)">−</button>
+        <button class="zoom-btn zoom-btn-sep" id="zc-reset" title="По данным">⊙</button>
+        <button class="zoom-btn zoom-btn-axis" id="zc-yp"   title="Расширить ось YTM">Y+</button>
+        <button class="zoom-btn zoom-btn-axis" id="zc-ym"   title="Сузить ось YTM">Y−</button>
+        <button class="zoom-btn zoom-btn-axis" id="zc-xp"   title="Расширить ось Дюрация">X+</button>
+        <button class="zoom-btn zoom-btn-axis" id="zc-xm"   title="Сузить ось Дюрация">X−</button>
+      </div>
+
+      <div class="chart-footer">
+        <button id="btn-reset-zoom" class="btn-reset-zoom" title="Вернуть начальный масштаб">↺ Сбросить масштаб</button>
+        <p class="chart-hint">Колесо мыши — масштаб &nbsp;·&nbsp; Перетащить шкалу — масштаб оси &nbsp;·&nbsp; Нажмите <b>⬚</b> в правом верхнем углу, чтобы выделить область</p>
+      </div>
+    </div>
+
+    <div id="sel-bar" class="sel-bar" style="display:none">
+      <span id="sel-count" class="sel-count"></span>
+      <div class="sel-actions">
+        <button id="btn-clear" class="btn">← Вернуться к полной карте</button>
+        <button id="btn-csv" class="btn">↓ Скачать CSV</button>
+      </div>
+    </div>
+
+    <div id="bond-card" class="bond-card" style="display:none">
+      <button id="bond-card-close" class="bond-card-close" title="Закрыть">✕</button>
+      <div id="bond-card-body"></div>
+    </div>
+
+    <div id="tbl-wrap" style="display:none">
+      <table class="bonds-tbl">
+        <thead>
+          <tr>
+            <th data-col="id">Тикер</th>
+            <th data-col="name">Название</th>
+            <th data-col="type">Тип</th>
+            <th data-col="ytm" class="r">YTM, %</th>
+            <th data-col="duration" class="r">Дюрация, лет</th>
+            <th data-col="couponRate" class="r">Купон, %</th>
+            <th data-col="couponType">Тип купона</th>
+            <th data-col="rating">Рейтинг</th>
+            <th data-col="maturity">Погашение</th>
+            <th data-col="currency">Валюта</th>
+          </tr>
+        </thead>
+        <tbody id="tbl-body"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="app.js?v=54"></script>
+</body>
+</html>
