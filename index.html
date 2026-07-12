@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Карта рынка облигаций — MOEX</title>
-  <link rel="stylesheet" href="style.css?v=56">
+  <link rel="stylesheet" href="style.css?v=59">
 </head>
 <body>
   <div class="app">
@@ -195,11 +195,6 @@
       </div>
     </div>
 
-    <div id="bond-card" class="bond-card" style="display:none">
-      <button id="bond-card-close" class="bond-card-close" title="Закрыть">✕</button>
-      <div id="bond-card-body"></div>
-    </div>
-
     <div id="tbl-wrap" style="display:none">
       <table class="bonds-tbl">
         <thead>
@@ -222,9 +217,33 @@
 
   </div>
 
+  <!-- Панель облигации (боковая, с графиком Z-спреда) -->
+  <div id="bond-panel" class="bond-panel">
+    <div class="bp-header">
+      <div class="bp-title-row">
+        <span id="bp-name" class="bp-name"></span>
+        <button id="bp-close" class="bp-close" title="Закрыть">✕</button>
+      </div>
+      <div id="bp-meta" class="bp-meta"></div>
+    </div>
+    <div class="bp-toolbar">
+      <span class="bp-toolbar-label">Z-спред и YTM</span>
+      <div class="bp-periods">
+        <button class="bp-period active" data-days="30">1М</button>
+        <button class="bp-period" data-days="90">3М</button>
+        <button class="bp-period" data-days="180">6М</button>
+      </div>
+    </div>
+    <div id="bp-chart" class="bp-chart"></div>
+    <div id="bp-commentary" class="bp-commentary"></div>
+    <div class="bp-footer">
+      <a id="bp-moex-link" href="#" target="_blank" class="bp-link">Страница на MOEX →</a>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-  <script src="app.js?v=56"></script>
+  <script src="app.js?v=59"></script>
 </body>
 </html>

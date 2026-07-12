@@ -246,7 +246,8 @@ function parseBoardBonds(secCols, mdCols, secRows, mdRows, bondType) {
       type:       bondType,
       couponType,
       couponRate: couponPct,
-      maturity:   s.MATDATE || null,
+      maturity:   s.MATDATE   || null,
+      offerDate:  s.OFFERDATE || null,
       currency:   normCurrency(s.FACEUNIT),
       ytm,
       duration:   dur / 365,   // дни → годы
@@ -1063,52 +1064,77 @@ function downloadCsv(bonds) {
   URL.revokeObjectURL(a.href);
 }
 
-// ─── Bond card (пин-карточка по клику) ───────────────────────────────────────
+// ─── Bond panel (боковая панель с графиком Z-спреда) ─────────────────────────
 
-function showBondCard(b, clientX = 0, clientY = 0) {
-  const rate      = b.couponRate != null ? b.couponRate.toFixed(2) + '%' : '—';
-  const priceStr  = b.price      != null ? b.price.toFixed(2) + '%' : '—';
-  const ratingStr = b.ratings?.length > 0 ? b.ratings.join(', ') : '—';
-  const moexUrl   = `https://www.moex.com/ru/issue.aspx?code=${b.id}`;
+let bondDetailChart = null;   // ECharts-инстанс внутри панели
+let bondDetailDays  = 30;     // текущий период (30 / 90 / 180)
+let bondDetailSecid = null;   // SECID текущей облигации
 
-  document.getElementById('bond-card-body').innerHTML =
-    `<b>${escHtml(b.name)}</b>` +
-    `<span class="lbl">Тикер:</span> <a href="${moexUrl}" target="_blank">${b.id}</a><br/>` +
-    `<span class="lbl">Цена:</span> <b>${priceStr}</b><br/>` +
-    `<span class="lbl">YTM:</span> <b>${b.ytm.toFixed(2)}%</b><br/>` +
-    `<span class="lbl">Дюрация:</span> ${b.duration.toFixed(2)} лет<br/>` +
-    `<span class="lbl">Купон:</span> ${rate} — ${b.couponType}<br/>` +
-    `<span class="lbl">Погашение:</span> ${b.maturity || '—'}<br/>` +
-    `<span class="lbl">Рейтинг:</span> ${ratingStr}<br/>` +
-    `<span class="lbl">Тип:</span> ${b.type}`;
+function showBondCard(b) {
+  const moexUrl  = `https://www.moex.com/ru/issue.aspx?code=${b.id}`;
+  const rating   = b.ratings?.length ? b.ratings.join(', ') : '—';
+  const price    = b.price    != null ? b.price.toFixed(2) + '%' : '—';
+  const coupon   = b.couponRate != null ? b.couponRate.toFixed(2) + '%' : '—';
+  const currYield = (b.couponRate != null && b.price != null && b.price > 0)
+    ? (b.couponRate / b.price * 100).toFixed(2) + '%'
+    : '—';
 
-  // Позиционируем рядом с курсором (как замёрзший тултип)
-  const card   = document.getElementById('bond-card');
-  const GAP    = 14;
-  const CARD_W = 310;
-  const CARD_H = 185;
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  document.getElementById('bp-name').textContent = b.name;
+  document.getElementById('bp-moex-link').href   = moexUrl;
+  document.getElementById('bp-moex-link').textContent = `${b.id} на MOEX →`;
 
-  let left = clientX + GAP;
-  let top  = clientY + GAP;
-  if (left + CARD_W > vw - 8) left = clientX - CARD_W - GAP;
-  if (top  + CARD_H > vh - 8) top  = clientY - CARD_H - GAP;
-  left = Math.max(8, left);
-  top  = Math.max(8, top);
+  document.getElementById('bp-meta').innerHTML =
+    `<span><span class="bp-lbl">YTM</span> <b>${b.ytm != null ? b.ytm.toFixed(2) + '%' : '—'}</b></span>` +
+    `<span><span class="bp-lbl">Цена</span> ${price}</span>` +
+    `<span><span class="bp-lbl">Дюрация</span> ${b.duration != null ? b.duration.toFixed(2) + ' лет' : '—'}</span>` +
+    `<span><span class="bp-lbl">Купон</span> ${coupon} ${b.couponType}</span>` +
+    `<span><span class="bp-lbl">Рейтинг</span> ${rating}</span>` +
+    `<span><span class="bp-lbl">Погашение</span> ${b.maturity || '—'}</span>` +
+    `<span><span class="bp-lbl">Тек. купон</span> ${currYield}</span>` +
+    `<span><span class="bp-lbl">YTM до</span> <span id="bp-ytm-date">${b.maturity || '—'}</span></span>`;
 
-  card.style.left    = left + 'px';
-  card.style.top     = top  + 'px';
-  card.style.display = 'block';
+  updateOfferDate(b.id);
+
+  document.getElementById('bond-panel').classList.add('open');
   document.body.classList.add('bond-card-open');
   document.querySelectorAll('.echarts-tooltip').forEach(el => {
     el.style.cssText += ';transition:none!important;opacity:0!important;visibility:hidden!important';
   });
   chart.dispatchAction({ type: 'hideTip' });
   chart.setOption({ tooltip: { trigger: 'none' } });
+
+  bondDetailSecid = b.id;
+  loadBondChart(b.id, bondDetailDays);
+}
+
+async function updateOfferDate(secid) {
+  try {
+    const url = `https://iss.moex.com/iss/securities/${encodeURIComponent(secid)}/bondization.json` +
+                `?iss.meta=off&iss.only=offers`;
+    const r    = await fetch(url);
+    const json = await r.json();
+    const cols = json.offers?.columns;
+    const rows = json.offers?.data;
+    if (!cols || !rows) return;
+
+    const today  = new Date().toISOString().slice(0, 10);
+    const putDate = rows
+      .map(row => Object.fromEntries(cols.map((c, i) => [c, row[i]])))
+      .filter(o => o.OFFERTYPE === 'P' && o.OFFERDATE > today)
+      .sort((a, b) => a.OFFERDATE.localeCompare(b.OFFERDATE))[0]?.OFFERDATE;
+
+    const el = document.getElementById('bp-ytm-date');
+    if (!el || bondDetailSecid !== secid) return;   // панель уже переключили
+
+    if (putDate) {
+      el.innerHTML = `${putDate} <span class="bp-offer-tag">оферта</span>`;
+    }
+    // нет будущей пут-оферты — оставляем дату погашения как есть
+  } catch { /* молча игнорируем */ }
 }
 
 function hideBondCard() {
+  document.getElementById('bond-panel').classList.remove('open');
   document.body.classList.remove('bond-card-open');
   document.querySelectorAll('.echarts-tooltip').forEach(el => {
     el.style.transition = '';
@@ -1116,7 +1142,323 @@ function hideBondCard() {
     el.style.visibility = '';
   });
   chart.setOption({ tooltip: { trigger: 'item' } });
-  document.getElementById('bond-card').style.display = 'none';
+}
+
+async function loadBondChart(secid, days) {
+  // Инициализируем ECharts при первом открытии (контейнер уже виден)
+  const container = document.getElementById('bp-chart');
+  if (!bondDetailChart) {
+    bondDetailChart = echarts.init(container, null, { renderer: 'canvas' });
+  } else {
+    bondDetailChart.resize();
+  }
+  bondDetailChart.showLoading({ text: 'Загрузка…', color: '#2b7de9', maskColor: 'rgba(255,255,255,0.6)' });
+
+  const till = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const base = `https://iss.moex.com/iss/history/engines/stock/markets/bonds/securities/${encodeURIComponent(secid)}.json`;
+
+  try {
+    // MOEX ISS возвращает не более 100 строк за запрос → пагинация
+    const allRows = [];
+    let   cols    = null;
+    let   start   = 0;
+    while (true) {
+      const qs = new URLSearchParams({
+        from, till, 'iss.meta': 'off', 'iss.only': 'history',
+        'history.columns': 'TRADEDATE,YIELDCLOSE,ZSPREAD,VOLUME,CLOSE',
+        start,
+      });
+      const r    = await fetch(`${base}?${qs}`);
+      const json = await r.json();
+      cols = json.history.columns;
+      const page = json.history.data;
+      allRows.push(...page);
+      if (page.length < 100) break;
+      start += 100;
+    }
+
+    const data = allRows
+      .map(r => {
+        const o = Object.fromEntries(cols.map((c, i) => [c, r[i]]));
+        return {
+          date:    o.TRADEDATE,
+          ytm:     o.YIELDCLOSE != null && +o.YIELDCLOSE > 0 ? +o.YIELDCLOSE : null,
+          zspread: o.ZSPREAD    != null ? +o.ZSPREAD * 100 : null,   // → бп
+          volume:  o.VOLUME     != null ? +o.VOLUME : 0,
+          price:   o.CLOSE      != null ? +o.CLOSE  : null,
+        };
+      })
+      .filter(d => d.ytm != null);
+
+    bondDetailChart.hideLoading();
+    if (secid === bondDetailSecid) {
+      renderBondChart(data);
+      renderBondCommentary(data);
+    }
+  } catch {
+    if (bondDetailChart) {
+      bondDetailChart.hideLoading();
+      bondDetailChart.setOption({ graphic: [{ type: 'text', left: 'center', top: 'middle',
+        style: { text: 'Нет данных', fill: '#6b7a99', fontSize: 13 } }] }, true);
+    }
+  }
+}
+
+function renderBondChart(data) {
+  const hasZS    = data.some(d => d.zspread != null);
+  const hasVol   = data.some(d => d.volume  > 0);
+  const hasPrice = data.some(d => d.price   != null);
+  const dates    = data.map(d => d.date);
+  const ytms     = data.map(d => d.ytm);
+  const zsData   = data.map(d => d.zspread);
+  const volData  = data.map(d => d.volume);
+  const priceData = data.map(d => d.price);
+
+  // Статистика Z-спреда для markLines (μ, ±1σ, ±2σ)
+  const zsValid = zsData.filter(v => v != null);
+  let markLineData = [];
+  if (hasZS && zsValid.length > 2) {
+    const mean = zsValid.reduce((s, v) => s + v, 0) / zsValid.length;
+    const std  = Math.sqrt(zsValid.reduce((s, v) => s + (v - mean) ** 2, 0) / zsValid.length);
+    const ml = (yVal, label, color) => ({
+      yAxis: yVal, name: label,
+      lineStyle: { color, type: 'dashed', width: 1 },
+      label: { show: true, position: 'insideEndTop', formatter: label, color, fontSize: 9 },
+    });
+    markLineData = [
+      ml(mean,           'μ',   '#2b7de9'),
+      ml(mean + std,     '+1σ', '#52c41a'),
+      ml(mean - std,     '−1σ', '#52c41a'),
+      ml(mean + 2 * std, '+2σ', '#ff4d4f'),
+      ml(mean - 2 * std, '−2σ', '#ff4d4f'),
+    ];
+  }
+
+  // Строим сетки снизу вверх: объём → цена → основная
+  const lPad = hasZS ? 56 : 52;
+  const rPad = hasZS ? 56 : 16;
+  let   bot  = 44;   // отступ снизу для текущей нижней сетки
+
+  const grids = [null];  // [0] заполним позже
+  let priceGridIdx = -1, priceXIdx = -1;
+  let volGridIdx   = -1, volXIdx   = -1;
+
+  if (hasVol) {
+    volGridIdx = grids.length;
+    grids.push({ left: lPad, right: rPad, height: 44, bottom: bot });
+    bot += 44 + 6;
+  }
+  if (hasPrice) {
+    priceGridIdx = grids.length;
+    grids.push({ left: lPad, right: rPad, height: 52, bottom: bot });
+    bot += 52 + 6;
+  }
+  grids[0] = { left: lPad, right: rPad, top: 36, bottom: bot };
+
+  // X-оси: метки только на самой нижней сетке
+  const bottomGridIdx = hasVol ? volGridIdx : (hasPrice ? priceGridIdx : 0);
+  const xAxes = [{
+    gridIndex: 0, type: 'category', data: dates, boundaryGap: false,
+    axisLabel: { show: bottomGridIdx === 0, color: '#6b7a99', fontSize: 10,
+      formatter: v => v.slice(5), interval: 'auto' },
+    axisLine: { lineStyle: { color: '#cdd5e4' } }, axisTick: { show: false },
+  }];
+  if (hasPrice) {
+    priceXIdx = xAxes.length;
+    xAxes.push({
+      gridIndex: priceGridIdx, type: 'category', data: dates, boundaryGap: false,
+      axisLabel: { show: bottomGridIdx === priceGridIdx, color: '#6b7a99', fontSize: 10,
+        formatter: v => v.slice(5), interval: 'auto' },
+      axisLine: { lineStyle: { color: '#cdd5e4' } }, axisTick: { show: false },
+    });
+  }
+  if (hasVol) {
+    volXIdx = xAxes.length;
+    xAxes.push({
+      gridIndex: volGridIdx, type: 'category', data: dates, boundaryGap: false,
+      axisLabel: { show: true, color: '#6b7a99', fontSize: 10,
+        formatter: v => v.slice(5), interval: 'auto' },
+      axisLine: { lineStyle: { color: '#cdd5e4' } }, axisTick: { show: false },
+    });
+  }
+
+  // Y-оси и серии
+  const yAxes  = [];
+  const series = [];
+  let   yIdx   = 0;
+
+  // Основная сетка: Z-спред (лево) + YTM (право)
+  if (hasZS) {
+    yAxes.push({
+      gridIndex: 0, type: 'value', name: 'Z-спред, бп', nameLocation: 'end',
+      nameTextStyle: { color: '#2b7de9', fontSize: 10, padding: [0, 0, 0, -40] },
+      axisLabel: { color: '#6b7a99', fontSize: 10 },
+      axisLine: { show: false }, axisTick: { show: false },
+      splitLine: { lineStyle: { color: '#cdd5e4', type: 'dashed' } },
+    });
+    series.push({
+      name: 'Z-спред', type: 'line', data: zsData, xAxisIndex: 0, yAxisIndex: yIdx++,
+      lineStyle: { color: '#2b7de9', width: 2 }, itemStyle: { color: '#2b7de9' },
+      symbol: 'none', smooth: false,
+      areaStyle: { color: 'rgba(43,125,233,0.07)' },
+      markLine: markLineData.length
+        ? { silent: true, animation: false, symbol: ['none', 'none'], data: markLineData }
+        : undefined,
+    });
+  }
+  yAxes.push({
+    gridIndex: 0, type: 'value', name: 'YTM, %', nameLocation: 'end',
+    nameTextStyle: { color: '#fa8c16', fontSize: 10, padding: [0, -30, 0, 0] },
+    axisLabel: { color: '#6b7a99', fontSize: 10, formatter: v => v.toFixed(1) + '%' },
+    axisLine: { show: false }, axisTick: { show: false },
+    splitLine: hasZS ? { show: false } : { lineStyle: { color: '#cdd5e4', type: 'dashed' } },
+    position: hasZS ? 'right' : 'left',
+  });
+  series.push({
+    name: 'YTM', type: 'line', data: ytms, xAxisIndex: 0, yAxisIndex: yIdx++,
+    lineStyle: { color: '#fa8c16', width: 1.5 }, itemStyle: { color: '#fa8c16' },
+    symbol: 'none', smooth: false,
+  });
+
+  // Сетка цены
+  if (hasPrice) {
+    yAxes.push({
+      gridIndex: priceGridIdx, type: 'value', scale: true,
+      axisLabel: { color: '#6b7a99', fontSize: 9, formatter: v => v.toFixed(1) },
+      axisLine: { show: false }, axisTick: { show: false },
+      splitLine: { lineStyle: { color: '#cdd5e4', type: 'dashed' } },
+      nameTextStyle: { color: '#52c41a', fontSize: 10 },
+    });
+    series.push({
+      name: 'Цена, %', type: 'line', data: priceData,
+      xAxisIndex: priceXIdx, yAxisIndex: yIdx++,
+      lineStyle: { color: '#52c41a', width: 1.5 }, itemStyle: { color: '#52c41a' },
+      symbol: 'none', smooth: false,
+      areaStyle: { color: 'rgba(82,196,26,0.07)' },
+    });
+  }
+
+  // Сетка объёма
+  if (hasVol) {
+    yAxes.push({
+      gridIndex: volGridIdx, type: 'value',
+      axisLabel: { show: false }, axisLine: { show: false },
+      axisTick: { show: false }, splitLine: { show: false },
+    });
+    series.push({
+      name: 'Объём', type: 'bar', data: volData,
+      xAxisIndex: volXIdx, yAxisIndex: yIdx,
+      itemStyle: { color: 'rgba(43,125,233,0.35)' },
+    });
+  }
+
+  const legendData = [...(hasZS ? ['Z-спред'] : []), 'YTM', ...(hasPrice ? ['Цена, %'] : [])];
+
+  bondDetailChart.setOption({
+    animation: false,
+    backgroundColor: 'transparent',
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+    grid: grids,
+    tooltip: {
+      trigger: 'axis', confine: true,
+      axisPointer: { type: 'cross', crossStyle: { color: '#999' } },
+      formatter: params => {
+        const date = params[0]?.axisValue || '';
+        const lines = params
+          .filter(p => p.seriesName !== 'Объём')
+          .map(p =>
+            `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;` +
+            `background:${p.color};margin-right:4px"></span>` +
+            `${p.seriesName}: <b>${p.value != null ? (+p.value).toFixed(2) : '—'}</b>`
+          );
+        return lines.join('<br/>') + `<br/><span style="color:#999;font-size:10px">${date}</span>`;
+      },
+    },
+    legend: {
+      data: legendData, top: 6, right: 12,
+      textStyle: { fontSize: 11, color: '#6b7a99' }, itemWidth: 14, itemHeight: 2,
+    },
+    xAxis: xAxes,
+    yAxis: yAxes,
+    series,
+  }, true);
+}
+
+function renderBondCommentary(data) {
+  const el = document.getElementById('bp-commentary');
+  if (!el) return;
+
+  const hasZS  = data.some(d => d.zspread != null);
+  const zsAll  = data.map(d => d.zspread);
+  const zsValid = zsAll.filter(v => v != null);
+  const ytms   = data.map(d => d.ytm).filter(v => v != null);
+
+  const blocks = [];
+
+  // 1. Возврат к среднему
+  if (hasZS && zsValid.length > 3) {
+    const mean = zsValid.reduce((s, v) => s + v, 0) / zsValid.length;
+    const std  = Math.sqrt(zsValid.reduce((s, v) => s + (v - mean) ** 2, 0) / zsValid.length);
+    const last = zsValid[zsValid.length - 1];
+    const dev  = std > 0 ? (last - mean) / std : 0;
+    const devStr = Math.abs(dev).toFixed(1);
+
+    let badge, cls, text;
+    if (dev > 2) {
+      badge = 'Риск-премия аномальна'; cls = 'bear';
+      text = `Z-спред (${last.toFixed(0)} бп) выше среднего на ${devStr}σ — аномально широкий. Рынок оценивает повышенный кредитный риск или низкую ликвидность. При нормализации спреда цена должна вырасти, но сначала нужно понять причину расширения.`;
+    } else if (dev > 1) {
+      badge = 'Спред расширился'; cls = 'warn';
+      text = `Z-спред (${last.toFixed(0)} бп) выше среднего на ${devStr}σ. Небольшое расширение — возможен рыночный шум или начало роста риск-премии. Стоит следить за динамикой.`;
+    } else if (dev < -2) {
+      badge = 'Спред аномально узкий'; cls = 'warn';
+      text = `Z-спред (${last.toFixed(0)} бп) ниже среднего на ${devStr}σ. Бумага оценена как почти безрисковая — возможна переоценка. Новым покупателям спред уже не «дешёвый».`;
+    } else if (dev < -1) {
+      badge = 'Спред сузился'; cls = 'info';
+      text = `Z-спред (${last.toFixed(0)} бп) ниже среднего на ${devStr}σ. Спред сжался относительно периода — если покупали шире, сейчас хороший момент для фиксации.`;
+    } else {
+      badge = 'В норме'; cls = 'info';
+      text = `Z-спред (${last.toFixed(0)} бп) находится в пределах ±1σ от среднего (${mean.toFixed(0)} бп). Аномалий нет, оценка соответствует недавней норме.`;
+    }
+
+    blocks.push(`<div class="bp-comment">
+      <div class="bp-comment-title">Возврат к среднему&nbsp;<span class="bp-sig bp-sig-${cls}">${badge}</span></div>
+      <div class="bp-comment-text">${text}</div>
+    </div>`);
+  }
+
+  // 4. Макро или кредит?
+  if (hasZS && zsValid.length > 3 && ytms.length > 3) {
+    const firstZS  = zsValid[0],       lastZS  = zsValid[zsValid.length - 1];
+    const firstYTM = ytms[0],          lastYTM = ytms[ytms.length  - 1];
+    const dzs  = lastZS  - firstZS;
+    const dytm = lastYTM - firstYTM;
+    const dzsStr  = (dzs  >= 0 ? '+' : '') + dzs.toFixed(0) + ' бп';
+    const dytmStr = (dytm >= 0 ? '+' : '') + dytm.toFixed(2) + '%';
+
+    let text;
+    if (Math.abs(dytm) < 0.05 && Math.abs(dzs) < 10) {
+      text = `За период YTM изменился незначительно (${dytmStr}), Z-спред — тоже (${dzsStr}). Ситуация стабильная.`;
+    } else if (dytm > 0.05 && dzs < 0) {
+      text = `YTM вырос (${dytmStr}), но Z-спред сузился (${dzsStr}). Рост доходности обусловлен повышением безрисковых ставок (ОФЗ), а не ухудшением кредитного качества — это макро-фактор, не специфика эмитента.`;
+    } else if (dytm < -0.05 && dzs > 0) {
+      text = `YTM снизился (${dytmStr}), но Z-спред расширился (${dzsStr}). Доходность падает вслед за ОФЗ, при этом рынок закладывает больший кредитный риск — сигнал тревоги для долгосрочных держателей.`;
+    } else if (dytm > 0.05 && dzs > 20) {
+      text = `И YTM (${dytmStr}), и Z-спред (${dzsStr}) выросли. Рост доходности имеет кредитную природу — рынок требует большую премию за риск эмитента, а не просто следует за ОФЗ.`;
+    } else if (dytm < -0.05 && dzs < -20) {
+      text = `И YTM (${dytmStr}), и Z-спред (${dzsStr}) снизились. Сужение кредитного спреда говорит об улучшении восприятия эмитента рынком, а не только о движении безрисковых ставок.`;
+    } else {
+      text = `За период YTM изменился на ${dytmStr}, Z-спред — на ${dzsStr}. Влияние макро- и кредитного факторов смешанное.`;
+    }
+
+    blocks.push(`<div class="bp-comment">
+      <div class="bp-comment-title">Макро или кредит?</div>
+      <div class="bp-comment-text">${text}</div>
+    </div>`);
+  }
+
+  el.innerHTML = blocks.join('');
 }
 
 function exitBrushMode() {
@@ -1685,6 +2027,7 @@ function initPortfolio() {
     if (chart) applyFilters();
   });
 
+
   document.getElementById('btn-pf-excel').addEventListener('click', () =>
     document.getElementById('pf-excel-input').click());
   document.getElementById('pf-excel-input').addEventListener('change', e => {
@@ -1736,7 +2079,16 @@ async function init() {
 
   document.getElementById('btn-clear').addEventListener('click', clearBrush);
   document.getElementById('btn-csv').addEventListener('click', () => downloadCsv(selectedBonds));
-  document.getElementById('bond-card-close').addEventListener('click', hideBondCard);
+  document.getElementById('bp-close').addEventListener('click', hideBondCard);
+
+  document.querySelectorAll('.bp-period').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.bp-period').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      bondDetailDays = +btn.dataset.days;
+      if (bondDetailSecid) loadBondChart(bondDetailSecid, bondDetailDays);
+    });
+  });
   document.getElementById('btn-reset-zoom').addEventListener('click', resetZoom);
 
   const Z = ZOOM_STEP;
