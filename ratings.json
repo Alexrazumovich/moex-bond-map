@@ -400,7 +400,6 @@
   "RU000A103M36": "A.ru; A+|RU|",
   "RU000A103MW7": "AAA(RU); AAA.ru",
   "RU000A103N43": "AAA(RU); ruAAA",
-  "RU000A103P25": "AAA(RU); AAA.ru",
   "RU000A103P33": "A+(RU); ruA+",
   "RU000A103PD0": "ruAA; AA(RU)",
   "RU000A103PF5": "AAA(RU); AAA.ru",
@@ -2756,5 +2755,7 @@
   "RU000A10G8T0": "AAA(RU); ruAAA",
   "RU000A10G924": "A(RU); ruA",
   "RU000A10G940": "ruAA-; AA.ru",
-  "RU000A10G957": "ruAA-; AA.ru"
+  "RU000A10G957": "ruAA-; AA.ru",
+  "RU000A10G9B6": "AAA(RU); ruAAA",
+  "RU000A10G9C4": "BBB+(RU); BBB+.ru"
 }
